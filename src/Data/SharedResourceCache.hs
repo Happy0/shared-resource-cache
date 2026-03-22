@@ -7,7 +7,7 @@
 -- It is general purpose, but it is designed with the use case in mind where it is important that
 -- different threads need to share the same resource instance (such as a TChan used for broadcasting messages
 -- between threads)
-module Data.SharedSharedResourceCache (
+module Data.SharedResourceCache (
   makeSharedResourceCache,
   makeGlobalSharedResourceCache,
   withCacheableResource,
@@ -26,10 +26,10 @@ import qualified StmContainers.Map as M
 import Prelude
 import Control.Monad.Trans.Resource (MonadResource, ReleaseKey, runResourceT, allocate)
 import Control.Monad.IO.Class (liftIO)
-import Data.SharedSharedResourceCache.Internal.CacheItem (CacheItem(..))
-import Data.SharedSharedResourceCache.Internal.ExpiringSharedSharedResourceCache (CacheEntry(..), SharedResourceCache (..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handlerSharerJoin, handleSharerLeaveSTM)
-import Data.SharedSharedResourceCache.Internal.Broom (startBroomLoop)
-import Data.SharedSharedResourceCache.Internal.Model (CacheExpiryConfig(..))
+import Data.SharedResourceCache.Internal.CacheItem (CacheItem(..))
+import Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry(..), SharedResourceCache (..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handlerSharerJoin, handleSharerLeaveSTM)
+import Data.SharedResourceCache.Internal.Broom (startBroomLoop)
+import Data.SharedResourceCache.Internal.Model (CacheExpiryConfig(..))
 
 -- | Constructs a resource cache that is expected to be used for the lifetime of the program. Internally, it forks a thread to 
 --  manage periodically removing cache entries that have expired (as per the cache expiry configuration.)

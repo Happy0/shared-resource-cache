@@ -1,6 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
-module Data.SharedSharedResourceCache.Internal.ExpiringSharedSharedResourceCache (CacheEntry(..), SharedResourceCache(..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handleSharerLeaveSTM, handlerSharerJoin) where
-    import Data.SharedSharedResourceCache.Internal.CacheItem (CacheItem (CacheItem), decreaseSharersByOne, increaseSharersByOne)
+module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry(..), SharedResourceCache(..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handleSharerLeaveSTM, handlerSharerJoin) where
+    import Data.SharedResourceCache.Internal.CacheItem (CacheItem (CacheItem), decreaseSharersByOne, increaseSharersByOne)
     import Control.Concurrent ( MVar, ThreadId, putMVar, readMVar )
     import qualified StmContainers.Map as M
     import Data.Text (Text)
@@ -11,8 +11,8 @@ module Data.SharedSharedResourceCache.Internal.ExpiringSharedSharedResourceCache
     import Control.Monad.STM (atomically)
     
     import Control.Monad (void, when)
-    import Data.SharedSharedResourceCache.Internal.Broom (scheduleCacheCleanup, removeScheduledCleanup)
-    import Data.SharedSharedResourceCache.Internal.Model (CacheExpiryConfig, CacheEntry (..))
+    import Data.SharedResourceCache.Internal.Broom (scheduleCacheCleanup, removeScheduledCleanup)
+    import Data.SharedResourceCache.Internal.Model (CacheExpiryConfig, CacheEntry (..))
     import Data.Time.Clock (getCurrentTime)
     import Control.Concurrent.MVar (newEmptyMVar)
     import Control.Concurrent.STM.TVar (newTVar)
