@@ -8,6 +8,16 @@ and this project adheres to the
 
 ## Unreleased
 
+## 0.1.0.1 - 2026-03-22
+
+### Fixed
+
+- Fixed a resource leak where an async exception delivered to the loading thread
+  after a successful `putIntoCache` STM commit could leave a cache entry with its
+  sharer count permanently stuck at 1, preventing eviction. The entry is now
+  correctly decremented (and scheduled for eviction if no other sharers remain)
+  via `adjustCacheEntryOnLoadError`.
+
 ## 0.1.0.0 - 2026-03-22
 
 ### Added

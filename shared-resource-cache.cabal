@@ -5,7 +5,8 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           shared-resource-cache
-version:        0.1.0.0
+version:        0.1.0.1
+synopsis:       A thread-safe cache for sharing resources across threads with automatic expiry
 description:    A cache designed for guaranteeing that different threads can share the same reference to a resource. For example, it allows threads to communicate via a shared
                 <<https://hackage.haskell.org/package/stm-2.5.3.1/docs/Control-Concurrent-STM-TChan.html TChan broadcast channel>>. 
                 Using <<https://hackage.haskell.org/package/resourcet resourcet>>, items are only removed from the cache after no 'sharers' are holding the
@@ -13,6 +14,7 @@ description:    A cache designed for guaranteeing that different threads can sha
                 .
                 Note: an MVar is used to coordinate between threads that only one thread does the initial load of the resource with the given IO action if multiple
                 threads try and retrieve a resource that is not yet cached at the same time.
+category:       Concurrency
 homepage:       https://github.com/happy0/shared-resource-cache#readme
 bug-reports:    https://github.com/happy0/shared-resource-cache/issues
 author:         Gordon Martin

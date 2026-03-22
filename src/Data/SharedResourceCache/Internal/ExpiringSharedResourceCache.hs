@@ -7,7 +7,7 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
     import Data.Time (UTCTime)
     import Control.Concurrent.STM (STM)
     import Control.Exception ( mask,
-      uninterruptibleMask_, finally )
+      uninterruptibleMask_, onException )
     import Control.Monad.STM (atomically)
     
     import Control.Monad (void, when)
@@ -16,7 +16,8 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
     import Data.Time.Clock (getCurrentTime)
     import Control.Concurrent.MVar (newEmptyMVar)
     import Control.Concurrent.STM.TVar (newTVar)
-
+    import Data.Either (isLeft)
+    
     -- | A cache of resources that can be shared between multiple threads (such as a TChan broadcast channel.)
     --
     data SharedResourceCache err a = SharedResourceCache {
@@ -74,9 +75,13 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
                 Nothing -> restore $ loadCacheableResource resourceCache resourceId
 
                 -- We've claimed ownership of loading the item into the cache
-                Just semaphore ->
-                    restore (loadIntoCache resourceCache resourceId semaphore)
-                        `finally` uninterruptibleMask_ (removeLoadingClaim resourceCache resourceId >> signalCacheLoaded semaphore)
+                Just semaphore -> do
+                    result <- restore (loadIntoCache resourceCache resourceId semaphore)
+                        `onException` uninterruptibleMask_ (adjustCacheEntryOnLoadError resourceCache resourceId >> signalCacheLoaded semaphore)
+
+                    when (isLeft result) (uninterruptibleMask_  (adjustCacheEntryOnLoadError resourceCache resourceId))
+                    signalCacheLoaded semaphore
+                    pure result
             )
 
         where
@@ -111,10 +116,16 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
                     M.insert (LoadedEntry entry) resourceId cache
                     pure (Right entry)
 
-            removeLoadingClaim :: SharedResourceCache err a -> Text -> IO ()
-            removeLoadingClaim resourceCache@(SharedResourceCache cache _ _ _ _ _) resourceId = atomically $ do
-                result <- M.lookup resourceId cache
+            adjustCacheEntryOnLoadError :: SharedResourceCache err a -> Text -> IO ()
+            adjustCacheEntryOnLoadError resourceCache@(SharedResourceCache cache _ _ _ _ _) resourceId = do 
+                now <- getCurrentTime
 
-                case result of
-                    Just (LoadingEntry _) -> void (M.delete resourceId cache)
-                    _ -> pure ()
+                atomically $ do
+                    result <-  M.lookup resourceId cache
+                    case result of
+                        -- Error occurred before we were able to load the cache entry - delete it
+                        Just (LoadingEntry _) -> M.delete resourceId cache
+                        -- Error occurred after we loaded the cache entry meaning although we won't subscribe other threads may
+                        -- until the entry is expired
+                        Just (LoadedEntry item) -> handleSharerLeaveSTM resourceCache item resourceId now
+                        _ -> pure ()
