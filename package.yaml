@@ -2,6 +2,8 @@ name:                shared-resource-cache
 version:             0.1.0.0
 github:              "happy0/shared-resource-cache"
 license:             MIT
+category:            Concurrency
+synopsis:            A thread-safe cache for sharing resources across threads with automatic expiry
 author:              "Gordon Martin"
 maintainer:          "gordonhughmartin@gmail.com"
 copyright:           "2026 Gordon Martin"
