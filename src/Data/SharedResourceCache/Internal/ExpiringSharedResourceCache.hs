@@ -1,6 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
-module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry(..), ResourceCache(..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handleSharerLeaveSTM, handlerSharerJoin) where
-    import Data.SharedResourceCache.Internal.CacheItem (CacheItem (CacheItem), decreaseSharersByOne, increaseSharersByOne)
+module Data.SharedSharedResourceCache.Internal.ExpiringSharedSharedResourceCache (CacheEntry(..), SharedResourceCache(..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handleSharerLeaveSTM, handlerSharerJoin) where
+    import Data.SharedSharedResourceCache.Internal.CacheItem (CacheItem (CacheItem), decreaseSharersByOne, increaseSharersByOne)
     import Control.Concurrent ( MVar, ThreadId, putMVar, readMVar )
     import qualified StmContainers.Map as M
     import Data.Text (Text)
@@ -11,15 +11,15 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
     import Control.Monad.STM (atomically)
     
     import Control.Monad (void, when)
-    import Data.SharedResourceCache.Internal.Broom (scheduleCacheCleanup, removeScheduledCleanup)
-    import Data.SharedResourceCache.Internal.Model (CacheExpiryConfig, CacheEntry (..))
+    import Data.SharedSharedResourceCache.Internal.Broom (scheduleCacheCleanup, removeScheduledCleanup)
+    import Data.SharedSharedResourceCache.Internal.Model (CacheExpiryConfig, CacheEntry (..))
     import Data.Time.Clock (getCurrentTime)
     import Control.Concurrent.MVar (newEmptyMVar)
     import Control.Concurrent.STM.TVar (newTVar)
 
     -- | A cache of resources that can be shared between multiple threads (such as a TChan broadcast channel.)
     --
-    data ResourceCache err a = ResourceCache {
+    data SharedResourceCache err a = SharedResourceCache {
         cache :: M.Map Text (CacheEntry err a),
         cleanUpMap :: M.Map Text UTCTime,
         loadResourceOp :: Text -> IO (Either err a),
@@ -28,23 +28,23 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
         cacheExpiryConfig :: CacheExpiryConfig
     }
 
-    handlerSharerJoin :: ResourceCache err a -> CacheItem a -> Text -> STM ()
+    handlerSharerJoin :: SharedResourceCache err a -> CacheItem a -> Text -> STM ()
     handlerSharerJoin cache cacheItem resourceId = do
         void $ increaseSharersByOne cacheItem
         removeScheduledCleanup (cleanUpMap cache) resourceId
 
-    handleSharerLeave :: ResourceCache err a -> CacheItem a -> Text -> IO ()
+    handleSharerLeave :: SharedResourceCache err a -> CacheItem a -> Text -> IO ()
     handleSharerLeave cache cacheItem resourceId = do
         now <- getCurrentTime
         atomically (handleSharerLeaveSTM cache cacheItem resourceId now)
 
-    handleSharerLeaveSTM  :: ResourceCache err a -> CacheItem a -> Text -> UTCTime -> STM ()
-    handleSharerLeaveSTM (ResourceCache cache cleanUpMap _ _ _ config) cacheItem resourceId now = do
+    handleSharerLeaveSTM  :: SharedResourceCache err a -> CacheItem a -> Text -> UTCTime -> STM ()
+    handleSharerLeaveSTM (SharedResourceCache cache cleanUpMap _ _ _ config) cacheItem resourceId now = do
         newSharerCount <- decreaseSharersByOne cacheItem
         when (newSharerCount == 0) $ void (scheduleCacheCleanup cleanUpMap config now resourceId)
 
-    loadCacheableResource :: ResourceCache err a -> Text -> IO (Either err (CacheItem a))
-    loadCacheableResource resourceCache@(ResourceCache cache _ loadResourceOp _ _ _) resourceId = do
+    loadCacheableResource :: SharedResourceCache err a -> Text -> IO (Either err (CacheItem a))
+    loadCacheableResource resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId = do
         existingItem <- atomically $ do
             item <- M.lookup resourceId cache
             case item of
@@ -63,8 +63,8 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
                 loadCacheableResource resourceCache resourceId
             Nothing -> loadFreshlyIntoCache resourceCache resourceId
 
-    loadFreshlyIntoCache :: ResourceCache err a -> Text -> IO (Either err (CacheItem a))
-    loadFreshlyIntoCache resourceCache@(ResourceCache cache _ loadResourceOp _ _ _) resourceId =
+    loadFreshlyIntoCache :: SharedResourceCache err a -> Text -> IO (Either err (CacheItem a))
+    loadFreshlyIntoCache resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId =
         -- We run this operation in mask so that we aren't left with a permanent loading claim in the cache if the thread is interrupted
         mask $ (\restore -> do
             maybeSemaphore <- takeOwnershipOfLoad resourceCache resourceId
@@ -83,8 +83,8 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
             signalCacheLoaded semaphore = putMVar semaphore ()
 
             -- Returns a Just if we took ownership and Nothing if a thread is already loading the item or it has already been fully loaded
-            takeOwnershipOfLoad :: ResourceCache err a -> Text -> IO (Maybe (MVar ()))
-            takeOwnershipOfLoad resourceCache@(ResourceCache cache _ loadResourceOp _ _ _) resourceId = do
+            takeOwnershipOfLoad :: SharedResourceCache err a -> Text -> IO (Maybe (MVar ()))
+            takeOwnershipOfLoad resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId = do
                 signal <- newEmptyMVar
                 atomically $ do
                     cachedItem <- M.lookup resourceId cache
@@ -95,16 +95,15 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
                             pure (Just signal)
                         _ -> pure Nothing
 
-            loadIntoCache :: ResourceCache err a -> Text -> MVar () -> IO (Either err (CacheItem a))
-            loadIntoCache resourceCache@(ResourceCache cache _ loadResourceOp _ _ _) resourceId _ = do
+            loadIntoCache :: SharedResourceCache err a -> Text -> MVar () -> IO (Either err (CacheItem a))
+            loadIntoCache resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId _ = do
                 resourceLoadResult <- loadResourceOp resourceId
                 case resourceLoadResult of
                     Right resource -> putIntoCache resourceCache resourceId resource
                     Left err -> pure (Left err)
 
-
-            putIntoCache :: ResourceCache err a -> Text -> a -> IO (Either err (CacheItem a))
-            putIntoCache resourceCache@(ResourceCache cache _ loadResourceOp _ _ _) resourceId resource = do
+            putIntoCache :: SharedResourceCache err a -> Text -> a -> IO (Either err (CacheItem a))
+            putIntoCache resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId resource = do
                 atomically $ do
                     connections <- newTVar 0
                     let entry = CacheItem resource connections
@@ -112,8 +111,8 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
                     M.insert (LoadedEntry entry) resourceId cache
                     pure (Right entry)
 
-            removeLoadingClaim :: ResourceCache err a -> Text -> IO ()
-            removeLoadingClaim resourceCache@(ResourceCache cache _ _ _ _ _) resourceId = atomically $ do
+            removeLoadingClaim :: SharedResourceCache err a -> Text -> IO ()
+            removeLoadingClaim resourceCache@(SharedResourceCache cache _ _ _ _ _) resourceId = atomically $ do
                 result <- M.lookup resourceId cache
 
                 case result of

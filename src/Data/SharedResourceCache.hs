@@ -7,12 +7,12 @@
 -- It is general purpose, but it is designed with the use case in mind where it is important that
 -- different threads need to share the same resource instance (such as a TChan used for broadcasting messages
 -- between threads)
-module Data.SharedResourceCache (
-  makeResourceCache,
-  makeGlobalResourceCache,
+module Data.SharedSharedResourceCache (
+  makeSharedResourceCache,
+  makeGlobalSharedResourceCache,
   withCacheableResource,
   getCacheableResource,
-  ResourceCache,
+  SharedResourceCache,
   peekCacheableResource,
   withPeekCacheableResource,
   CacheExpiryConfig(..)) where
@@ -26,41 +26,41 @@ import qualified StmContainers.Map as M
 import Prelude
 import Control.Monad.Trans.Resource (MonadResource, ReleaseKey, runResourceT, allocate)
 import Control.Monad.IO.Class (liftIO)
-import Data.SharedResourceCache.Internal.CacheItem (CacheItem(..))
-import Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry(..), ResourceCache (..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handlerSharerJoin, handleSharerLeaveSTM)
-import Data.SharedResourceCache.Internal.Broom (startBroomLoop)
-import Data.SharedResourceCache.Internal.Model (CacheExpiryConfig(..))
+import Data.SharedSharedResourceCache.Internal.CacheItem (CacheItem(..))
+import Data.SharedSharedResourceCache.Internal.ExpiringSharedSharedResourceCache (CacheEntry(..), SharedResourceCache (..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handlerSharerJoin, handleSharerLeaveSTM)
+import Data.SharedSharedResourceCache.Internal.Broom (startBroomLoop)
+import Data.SharedSharedResourceCache.Internal.Model (CacheExpiryConfig(..))
 
 -- | Constructs a resource cache that is expected to be used for the lifetime of the program. Internally, it forks a thread to 
 --  manage periodically removing cache entries that have expired (as per the cache expiry configuration.)
-makeGlobalResourceCache 
+makeGlobalSharedResourceCache 
  :: (Text -> IO (Either err a)) -- The action to load the given resource by ID
  -> Maybe (a -> IO ()) -- An action to be executed when the item is removed from the cache
  -> CacheExpiryConfig -- The configuration for when the cache item should be marked as expired and be eligible for removal from the cache
- -> IO (ResourceCache err a)
-makeGlobalResourceCache loadResourceOp onRemoval cacheExpiryConfig@(CacheExpiryConfig sweepIntervalSeconds _) = do
+ -> IO (SharedResourceCache err a)
+makeGlobalSharedResourceCache loadResourceOp onRemoval cacheExpiryConfig@(CacheExpiryConfig sweepIntervalSeconds _) = do
   resourceCache <- M.newIO
   cleanUpMap <- M.newIO
   threadId <- forkIO $ startBroomLoop resourceCache cleanUpMap onRemoval sweepIntervalSeconds
-  pure $ ResourceCache resourceCache cleanUpMap loadResourceOp onRemoval threadId cacheExpiryConfig
+  pure $ SharedResourceCache resourceCache cleanUpMap loadResourceOp onRemoval threadId cacheExpiryConfig
 
--- | The same as 'makeGlobalResourceCache' but intended for cases where the cache doesn't live for the lifetime of the program.
+-- | The same as 'makeGlobalSharedResourceCache' but intended for cases where the cache doesn't live for the lifetime of the program.
 --   When the resource is freed (via MonadResource) the forked thread for cleaning the resource cache is killed.
-makeResourceCache :: (MonadResource m) => (Text -> IO (Either err a)) -> Maybe (a -> IO ()) -> CacheExpiryConfig -> m (ReleaseKey, ResourceCache err a)
-makeResourceCache loadResourceOp onRemoval cacheExpiryConfig = do
+makeSharedResourceCache :: (MonadResource m) => (Text -> IO (Either err a)) -> Maybe (a -> IO ()) -> CacheExpiryConfig -> m (ReleaseKey, SharedResourceCache err a)
+makeSharedResourceCache loadResourceOp onRemoval cacheExpiryConfig = do
   allocate (allocateResource loadResourceOp onRemoval) deallocateResource
   where
-    allocateResource :: (Text -> IO (Either err a)) -> Maybe (a -> IO ()) -> IO (ResourceCache err a)
-    allocateResource loadOp removal = makeGlobalResourceCache loadOp removal cacheExpiryConfig
+    allocateResource :: (Text -> IO (Either err a)) -> Maybe (a -> IO ()) -> IO (SharedResourceCache err a)
+    allocateResource loadOp removal = makeGlobalSharedResourceCache loadOp removal cacheExpiryConfig
 
-    deallocateResource :: ResourceCache err a -> IO ()
+    deallocateResource :: SharedResourceCache err a -> IO ()
     deallocateResource cache = do
       let threadId = cacheCleanupThreadId cache
       killThread threadId
 
 -- | Executes the given action using the resource with the given ID. This function is a wrapper around the 'getCacheableResource' function,
 --   where the resource is freed at the end of the supplied action
-withCacheableResource :: ResourceCache err a -> Text -> (Either err a -> IO ()) -> IO ()
+withCacheableResource :: SharedResourceCache err a -> Text -> (Either err a -> IO ()) -> IO ()
 withCacheableResource cache resourceId op =
   runResourceT $ do
     (_, cachedResource) <- getCacheableResource cache resourceId
@@ -78,15 +78,15 @@ withCacheableResource cache resourceId op =
 -- When there are no sharers remaining, the cache item is scheduled for eviction according to the configuration that was used at cache
 -- construction time
 --
-getCacheableResource :: (MonadResource m) => ResourceCache err a -> Text -> m (ReleaseKey, Either err a)
+getCacheableResource :: (MonadResource m) => SharedResourceCache err a -> Text -> m (ReleaseKey, Either err a)
 getCacheableResource resourceCache resourceId = do
   (releaseKey, cacheEntry) <- allocate (allocateResource resourceCache resourceId) (deAllocateResource resourceCache)
   return (releaseKey, cacheItem <$> cacheEntry)
   where
-    allocateResource :: ResourceCache err a -> Text -> IO (Either err (CacheItem a))
+    allocateResource :: SharedResourceCache err a -> Text -> IO (Either err (CacheItem a))
     allocateResource = loadCacheableResource
 
-    deAllocateResource :: ResourceCache err a -> Either err (CacheItem a) -> IO ()
+    deAllocateResource :: SharedResourceCache err a -> Either err (CacheItem a) -> IO ()
     deAllocateResource resourceCache resource = do
       case resource of
         Left _ -> pure ()
@@ -96,12 +96,12 @@ getCacheableResource resourceCache resourceId = do
 --
 --  If there are no other sharers of the resource once the resource action has been run to completion
 --  or the 'release key' is used to free it early then the item is scheduled for eviction from the cache.
-peekCacheableResource :: MonadResource m => ResourceCache err a -> Text -> m (ReleaseKey, Maybe a)
+peekCacheableResource :: MonadResource m => SharedResourceCache err a -> Text -> m (ReleaseKey, Maybe a)
 peekCacheableResource resourceCache resourceId = do
   (releaseKey, cacheEntry) <- allocate (allocateResource resourceCache resourceId) (deAllocateResource resourceCache)
   return (releaseKey, cacheItem <$> cacheEntry)
   where
-    allocateResource :: ResourceCache err a -> Text -> IO (Maybe (CacheItem a))
+    allocateResource :: SharedResourceCache err a -> Text -> IO (Maybe (CacheItem a))
     allocateResource resourceCache resourceId = atomically $ do
       item <- M.lookup resourceId (cache resourceCache)
       case item of
@@ -110,7 +110,7 @@ peekCacheableResource resourceCache resourceId = do
           pure (Just cachedItem)
         _ -> pure Nothing    
 
-    deAllocateResource :: ResourceCache err a -> Maybe (CacheItem a) -> IO ()
+    deAllocateResource :: SharedResourceCache err a -> Maybe (CacheItem a) -> IO ()
     deAllocateResource resourceCache resource =
       case resource of
         Nothing -> pure ()
@@ -125,7 +125,7 @@ peekCacheableResource resourceCache resourceId = do
 -- The 'now' parameter is used to schedule the item for eviction from the cache according to the 
 -- expiry config and should be the current time. It is required to be passed in as getting the current time
 -- is an IO action that cannot be performed in an STM transaction.
-withPeekCacheableResource :: ResourceCache err a -> Text -> (Maybe a -> STM b) -> UTCTime -> STM b
+withPeekCacheableResource :: SharedResourceCache err a -> Text -> (Maybe a -> STM b) -> UTCTime -> STM b
 withPeekCacheableResource resourceCache resourceId action now = do
   resource <- M.lookup resourceId (cache resourceCache)
   case resource of
