@@ -71,6 +71,8 @@ withCacheableResource cache resourceId op =
 --
 -- If the item is already loaded into the cache, it is returned. If it is not yet loaded, the first thread requesting this resource to
 -- acquire a MVar will take ownership of loading it and signal to any other threads waiting for the resource that it has been loaded.
+-- If the IO action throws an error or results a 'Left', the MVar is removed from the cache and another waiting thread (or a future call if there are
+-- no current calls) can pick up the MVar to load the resource
 -- 
 -- This action is executed in the 'MonadResource' monad typeclass
 -- context so that when the resource is freed, the cache can mark the cache item as having one less sharer.
@@ -83,6 +85,7 @@ getCacheableResource resourceCache resourceId = do
   (releaseKey, cacheEntry) <- allocate (allocateResource resourceCache resourceId) (deAllocateResource resourceCache)
   return (releaseKey, cacheItem <$> cacheEntry)
   where
+
     allocateResource :: SharedResourceCache err a -> Text -> IO (Either err (CacheItem a))
     allocateResource = loadCacheableResource
 

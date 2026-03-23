@@ -52,8 +52,6 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
                 Nothing -> pure Nothing
                 Just result@(LoadingEntry loadingMVar) -> pure (Just result)
                 Just result@(LoadedEntry resource) -> do
-                    -- TODO: deal with case where thread is killed / interrupted after this transaction but before 'allocate' finishes resulting in a resource
-                    -- leak
                     handlerSharerJoin resourceCache resource resourceId
                     pure (Just result)
 
@@ -67,24 +65,26 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
             Nothing -> loadFreshlyIntoCache resourceCache resourceId
 
     loadFreshlyIntoCache :: SharedResourceCache err a -> Text -> IO (Either err (CacheItem a))
-    loadFreshlyIntoCache resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId =
-        -- We run this operation in mask so that we aren't left with a permanent loading claim in the cache if the thread is interrupted
-        mask $ (\restore -> do
-            maybeSemaphore <- takeOwnershipOfLoad resourceCache resourceId
+    loadFreshlyIntoCache resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId = do
+        maybeSemaphore <- takeOwnershipOfLoad resourceCache resourceId
 
-            case maybeSemaphore of
-                -- Already loaded or loading in another thread, recursively start again
-                Nothing -> restore $ loadCacheableResource resourceCache resourceId
+        case maybeSemaphore of
+            -- Already loaded or loading in another thread, recursively start again
+            Nothing -> loadCacheableResource resourceCache resourceId
 
-                -- We've claimed ownership of loading the item into the cache
-                Just semaphore -> do
-                    result <- restore (loadIntoCache resourceCache resourceId semaphore)
-                        `onException` uninterruptibleMask_ (adjustCacheEntryOnLoadError resourceCache resourceId >> signalCacheLoaded semaphore)
+            -- We've claimed ownership of loading the item into the cache
+            Just semaphore -> do
+                -- We use uninterruptibleMask so that an async exception can't stop the sempahore remaining in the cache blocking any readers of the resource
+                -- from getting the resource. We're in the context of resourcet's 'allocate' so we're otherwise 'masked' apart from on blocking operations
+                result <- loadIntoCache resourceCache resourceId semaphore
+                    `onException` uninterruptibleMask_ (adjustCacheEntryOnLoadError resourceCache resourceId >> signalCacheLoaded semaphore)
 
-                    when (isLeft result) (uninterruptibleMask_  (adjustCacheEntryOnLoadError resourceCache resourceId))
+                uninterruptibleMask_ $ do
+                    when (isLeft result) (adjustCacheEntryOnLoadError resourceCache resourceId)
                     signalCacheLoaded semaphore
-                    pure result
-            )
+                
+                pure result
+            
 
         where
             signalCacheLoaded semaphore = putMVar semaphore ()
@@ -120,14 +120,12 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
 
             adjustCacheEntryOnLoadError :: SharedResourceCache err a -> Text -> IO ()
             adjustCacheEntryOnLoadError resourceCache@(SharedResourceCache cache _ _ _ _ _) resourceId = do 
-                now <- getCurrentTime
 
                 atomically $ do
                     result <-  M.lookup resourceId cache
                     case result of
-                        -- Error occurred before we were able to load the cache entry - delete it
+                        -- Error occurred before we were able to load the cache entry - delete it so that another thread can claim 
+                        -- the semaphore to try loading it
                         Just (LoadingEntry _) -> M.delete resourceId cache
-                        -- Error occurred after we loaded the cache entry meaning although we won't subscribe other threads may
-                        -- until the entry is expired
-                        Just (LoadedEntry item) -> handleSharerLeaveSTM resourceCache item resourceId now
+                        -- It shouldn't be possible for a loaded entry to enter the cache and _then_ an exception to occur
                         _ -> pure ()

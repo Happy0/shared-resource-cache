@@ -8,6 +8,16 @@ and this project adheres to the
 
 ## Unreleased
 
+## 0.1.0.2 - 2026-03-23
+
+### Fixed
+
+- Fixed a bug where an async exception delivered after `loadIntoCache` returned
+  (but before `signalCacheLoaded` executed) would leave waiting threads permanently
+  blocked on the semaphore MVar. The `signalCacheLoaded` call is now inside
+  `uninterruptibleMask_` alongside `adjustCacheEntryOnLoadError`, ensuring the
+  semaphore is always signalled regardless of async exceptions.
+
 ## 0.1.0.1 - 2026-03-22
 
 ### Fixed
