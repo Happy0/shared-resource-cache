@@ -52,6 +52,8 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
                 Nothing -> pure Nothing
                 Just result@(LoadingEntry loadingMVar) -> pure (Just result)
                 Just result@(LoadedEntry resource) -> do
+                    -- TODO: deal with case where thread is killed / interrupted after this transaction but before 'allocate' finishes resulting in a resource
+                    -- leak
                     handlerSharerJoin resourceCache resource resourceId
                     pure (Just result)
 
