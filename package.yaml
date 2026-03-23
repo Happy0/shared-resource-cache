@@ -1,5 +1,5 @@
 name:                shared-resource-cache
-version:             0.1.0.2
+version:             0.1.0.3
 github:              "happy0/shared-resource-cache"
 license:             MIT
 category:            Concurrency

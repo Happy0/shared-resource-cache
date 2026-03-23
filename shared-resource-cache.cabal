@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           shared-resource-cache
-version:        0.1.0.2
+version:        0.1.0.3
 synopsis:       A thread-safe cache for sharing resources across threads with automatic expiry
 description:    A cache designed for guaranteeing that different threads can share the same reference to a resource. For example, it allows threads to communicate via a shared
                 <<https://hackage.haskell.org/package/stm-2.5.3.1/docs/Control-Concurrent-STM-TChan.html TChan broadcast channel>>. 

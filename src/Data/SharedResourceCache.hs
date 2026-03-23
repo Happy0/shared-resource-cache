@@ -30,6 +30,7 @@ import Data.SharedResourceCache.Internal.CacheItem (CacheItem(..))
 import Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry(..), SharedResourceCache (..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handlerSharerJoin, handleSharerLeaveSTM)
 import Data.SharedResourceCache.Internal.Broom (startBroomLoop)
 import Data.SharedResourceCache.Internal.Model (CacheExpiryConfig(..))
+import Control.Exception (uninterruptibleMask_)
 
 -- | Constructs a resource cache that is expected to be used for the lifetime of the program. Internally, it forks a thread to 
 --  manage periodically removing cache entries that have expired (as per the cache expiry configuration.)
@@ -56,7 +57,7 @@ makeSharedResourceCache loadResourceOp onRemoval cacheExpiryConfig = do
     deallocateResource :: SharedResourceCache err a -> IO ()
     deallocateResource cache = do
       let threadId = cacheCleanupThreadId cache
-      killThread threadId
+      uninterruptibleMask_ (killThread threadId)
 
 -- | Executes the given action using the resource with the given ID. This function is a wrapper around the 'getCacheableResource' function,
 --   where the resource is freed at the end of the supplied action

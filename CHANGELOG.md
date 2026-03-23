@@ -8,6 +8,15 @@ and this project adheres to the
 
 ## Unreleased
 
+## 0.1.0.3 - 2026-03-23
+
+### Fixed
+
+- Fixed a resource leak where an async exception delivered during `handleSharerLeave`
+  (between `getCurrentTime` and the `atomically` call, or during the `atomically` if it
+  blocks) could leave a cache entry's sharer count permanently elevated, preventing
+  eviction. `handleSharerLeave` is now wrapped in `uninterruptibleMask_`.
+
 ## 0.1.0.2 - 2026-03-23
 
 ### Fixed

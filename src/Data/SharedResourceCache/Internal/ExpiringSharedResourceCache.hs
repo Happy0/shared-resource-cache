@@ -35,9 +35,12 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
         removeScheduledCleanup (cleanUpMap cache) resourceId
 
     handleSharerLeave :: SharedResourceCache err a -> CacheItem a -> Text -> IO ()
-    handleSharerLeave cache cacheItem resourceId = do
-        now <- getCurrentTime
-        atomically (handleSharerLeaveSTM cache cacheItem resourceId now)
+    handleSharerLeave cache cacheItem resourceId = 
+        -- We wrap this in an uninterruptibleMask_ so that we don't end up with items in the cache with phantom
+        -- connections if the thread is killed during a blocking operation
+        uninterruptibleMask_ $ do
+            now <- getCurrentTime
+            atomically (handleSharerLeaveSTM cache cacheItem resourceId now)
 
     handleSharerLeaveSTM  :: SharedResourceCache err a -> CacheItem a -> Text -> UTCTime -> STM ()
     handleSharerLeaveSTM (SharedResourceCache cache cleanUpMap _ _ _ config) cacheItem resourceId now = do
