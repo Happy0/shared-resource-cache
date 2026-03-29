@@ -8,6 +8,17 @@ and this project adheres to the
 
 ## Unreleased
 
+## 0.2.0.0 - 2026-03-29
+
+### Changed
+
+- `SharedResourceCache` is now parameterised over the key type (`key`) rather than
+  being fixed to `Text`, allowing any `Hashable` key type to be used.
+- Type parameters of `SharedResourceCache` reordered and renamed: was
+  `SharedResourceCache err a`, now `SharedResourceCache key value err`.
+- All public functions that accept or return a resource ID now use the generic `key`
+  type instead of `Text`.
+
 ## 0.1.0.3 - 2026-03-23
 
 ### Fixed

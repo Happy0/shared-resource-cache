@@ -3,13 +3,13 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
     import Data.SharedResourceCache.Internal.CacheItem (CacheItem (CacheItem), decreaseSharersByOne, increaseSharersByOne)
     import Control.Concurrent ( MVar, ThreadId, putMVar, readMVar )
     import qualified StmContainers.Map as M
-    import Data.Text (Text)
+    import Data.Hashable (Hashable)
     import Data.Time (UTCTime)
     import Control.Concurrent.STM (STM)
     import Control.Exception ( mask,
       uninterruptibleMask_, onException )
     import Control.Monad.STM (atomically)
-    
+
     import Control.Monad (void, when)
     import Data.SharedResourceCache.Internal.Broom (scheduleCacheCleanup, removeScheduledCleanup)
     import Data.SharedResourceCache.Internal.Model (CacheExpiryConfig, CacheEntry (..))
@@ -17,37 +17,37 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
     import Control.Concurrent.MVar (newEmptyMVar)
     import Control.Concurrent.STM.TVar (newTVar)
     import Data.Either (isLeft)
-    
+
     -- | A cache of resources that can be shared between multiple threads (such as a TChan broadcast channel.)
     --
-    data SharedResourceCache err a = SharedResourceCache {
-        cache :: M.Map Text (CacheEntry err a),
-        cleanUpMap :: M.Map Text UTCTime,
-        loadResourceOp :: Text -> IO (Either err a),
-        onRemoval :: Maybe (a -> IO ()),
+    data SharedResourceCache key value err = SharedResourceCache {
+        cache :: M.Map key (CacheEntry value),
+        cleanUpMap :: M.Map key UTCTime,
+        loadResourceOp :: key -> IO (Either err value),
+        onRemoval :: Maybe (value -> IO ()),
         cacheCleanupThreadId :: ThreadId,
         cacheExpiryConfig :: CacheExpiryConfig
     }
 
-    handlerSharerJoin :: SharedResourceCache err a -> CacheItem a -> Text -> STM ()
+    handlerSharerJoin :: Hashable key => SharedResourceCache key value err -> CacheItem value -> key -> STM ()
     handlerSharerJoin cache cacheItem resourceId = do
         void $ increaseSharersByOne cacheItem
         removeScheduledCleanup (cleanUpMap cache) resourceId
 
-    handleSharerLeave :: SharedResourceCache err a -> CacheItem a -> Text -> IO ()
-    handleSharerLeave cache cacheItem resourceId = 
+    handleSharerLeave :: Hashable key => SharedResourceCache key value err -> CacheItem value -> key -> IO ()
+    handleSharerLeave cache cacheItem resourceId =
         -- We wrap this in an uninterruptibleMask_ so that we don't end up with items in the cache with phantom
         -- connections if the thread is killed during a blocking operation
         uninterruptibleMask_ $ do
             now <- getCurrentTime
             atomically (handleSharerLeaveSTM cache cacheItem resourceId now)
 
-    handleSharerLeaveSTM  :: SharedResourceCache err a -> CacheItem a -> Text -> UTCTime -> STM ()
+    handleSharerLeaveSTM :: Hashable key => SharedResourceCache key value err -> CacheItem value -> key -> UTCTime -> STM ()
     handleSharerLeaveSTM (SharedResourceCache cache cleanUpMap _ _ _ config) cacheItem resourceId now = do
         newSharerCount <- decreaseSharersByOne cacheItem
         when (newSharerCount == 0) $ void (scheduleCacheCleanup cleanUpMap config now resourceId)
 
-    loadCacheableResource :: SharedResourceCache err a -> Text -> IO (Either err (CacheItem a))
+    loadCacheableResource :: Hashable key => SharedResourceCache key value err -> key -> IO (Either err (CacheItem value))
     loadCacheableResource resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId = do
         existingItem <- atomically $ do
             item <- M.lookup resourceId cache
@@ -67,7 +67,7 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
                 loadCacheableResource resourceCache resourceId
             Nothing -> loadFreshlyIntoCache resourceCache resourceId
 
-    loadFreshlyIntoCache :: SharedResourceCache err a -> Text -> IO (Either err (CacheItem a))
+    loadFreshlyIntoCache :: forall key value err. Hashable key => SharedResourceCache key value err -> key -> IO (Either err (CacheItem value))
     loadFreshlyIntoCache resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId = do
         maybeSemaphore <- takeOwnershipOfLoad resourceCache resourceId
 
@@ -85,15 +85,15 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
                 uninterruptibleMask_ $ do
                     when (isLeft result) (adjustCacheEntryOnLoadError resourceCache resourceId)
                     signalCacheLoaded semaphore
-                
+
                 pure result
-            
+
 
         where
             signalCacheLoaded semaphore = putMVar semaphore ()
 
             -- Returns a Just if we took ownership and Nothing if a thread is already loading the item or it has already been fully loaded
-            takeOwnershipOfLoad :: SharedResourceCache err a -> Text -> IO (Maybe (MVar ()))
+            takeOwnershipOfLoad :: SharedResourceCache key value err -> key -> IO (Maybe (MVar ()))
             takeOwnershipOfLoad resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId = do
                 signal <- newEmptyMVar
                 atomically $ do
@@ -105,14 +105,14 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
                             pure (Just signal)
                         _ -> pure Nothing
 
-            loadIntoCache :: SharedResourceCache err a -> Text -> MVar () -> IO (Either err (CacheItem a))
+            loadIntoCache :: SharedResourceCache key value err -> key -> MVar () -> IO (Either err (CacheItem value))
             loadIntoCache resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId _ = do
                 resourceLoadResult <- loadResourceOp resourceId
                 case resourceLoadResult of
                     Right resource -> putIntoCache resourceCache resourceId resource
                     Left err -> pure (Left err)
 
-            putIntoCache :: SharedResourceCache err a -> Text -> a -> IO (Either err (CacheItem a))
+            putIntoCache :: SharedResourceCache key value err -> key -> value -> IO (Either err (CacheItem value))
             putIntoCache resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId resource = do
                 atomically $ do
                     connections <- newTVar 0
@@ -121,13 +121,13 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
                     M.insert (LoadedEntry entry) resourceId cache
                     pure (Right entry)
 
-            adjustCacheEntryOnLoadError :: SharedResourceCache err a -> Text -> IO ()
-            adjustCacheEntryOnLoadError resourceCache@(SharedResourceCache cache _ _ _ _ _) resourceId = do 
+            adjustCacheEntryOnLoadError :: SharedResourceCache key value err -> key -> IO ()
+            adjustCacheEntryOnLoadError resourceCache@(SharedResourceCache cache _ _ _ _ _) resourceId = do
 
                 atomically $ do
                     result <-  M.lookup resourceId cache
                     case result of
-                        -- Error occurred before we were able to load the cache entry - delete it so that another thread can claim 
+                        -- Error occurred before we were able to load the cache entry - delete it so that another thread can claim
                         -- the semaphore to try loading it
                         Just (LoadingEntry _) -> M.delete resourceId cache
                         -- It shouldn't be possible for a loaded entry to enter the cache and _then_ an exception to occur

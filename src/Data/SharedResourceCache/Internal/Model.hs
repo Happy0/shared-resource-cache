@@ -11,4 +11,4 @@ module Data.SharedResourceCache.Internal.Model(CacheExpiryConfig(..), CacheEntry
         -- ^ How long after a cache entry has had no sharers that it is eligible for removal from the cache by the sweeper background thread
     }
     
-    data CacheEntry err a = LoadedEntry (CacheItem a) | LoadingEntry (MVar ())
+    data CacheEntry a = LoadedEntry (CacheItem a) | LoadingEntry (MVar ())

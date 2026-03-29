@@ -1,5 +1,5 @@
 name:                shared-resource-cache
-version:             0.1.0.3
+version:             0.2.0.0
 github:              "happy0/shared-resource-cache"
 license:             MIT
 category:            Concurrency
@@ -27,6 +27,7 @@ dependencies:
 - text >= 2.0 && < 2.2
 - time >= 1.12 && < 2
 - stm-containers >= 1.2 && < 2
+- hashable >= 1.3 && < 2
 - list-t >= 1.0 && < 1.1
 - resourcet >= 1.3 && < 1.4
 
