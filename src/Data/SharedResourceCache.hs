@@ -35,9 +35,9 @@ import Control.Exception (uninterruptibleMask_)
 -- | Constructs a resource cache that is expected to be used for the lifetime of the program. Internally, it forks a thread to 
 --  manage periodically removing cache entries that have expired (as per the cache expiry configuration.)
 makeGlobalSharedResourceCache 
- :: (Text -> IO (Either err a)) -- The action to load the given resource by ID
- -> Maybe (a -> IO ()) -- An action to be executed when the item is removed from the cache
- -> CacheExpiryConfig -- The configuration for when the cache item should be marked as expired and be eligible for removal from the cache
+ :: (Text -> IO (Either err a)) -- ^ The action to load the given resource by ID. If the 'Either' result is a 'Left' or the IO action throws, the result is not stored in the cache
+ -> Maybe (a -> IO ()) -- ^ An action to be executed when the item is removed from the cache
+ -> CacheExpiryConfig -- ^ The configuration for when the cache item should be marked as expired and be eligible for removal from the cache
  -> IO (SharedResourceCache err a)
 makeGlobalSharedResourceCache loadResourceOp onRemoval cacheExpiryConfig@(CacheExpiryConfig sweepIntervalSeconds _) = do
   resourceCache <- M.newIO
