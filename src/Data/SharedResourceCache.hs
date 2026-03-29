@@ -37,7 +37,7 @@ import Control.Exception (uninterruptibleMask_)
 makeGlobalSharedResourceCache
  :: Hashable key
  => (key -> IO (Either err value)) -- ^ The action to load the given resource by ID. If the 'Either' result is a 'Left' or the IO action throws, the result is not stored in the cache
- -> Maybe (value -> IO ()) -- ^ An action to be executed when the item is removed from the cache
+ -> Maybe (value -> IO ()) -- ^ An action to be executed when the item is removed from the cache. If this action throws an exception it is silently ignored.
  -> CacheExpiryConfig -- ^ The configuration for when the cache item should be marked as expired and be eligible for removal from the cache
  -> IO (SharedResourceCache key value err)
 makeGlobalSharedResourceCache loadResourceOp onRemoval cacheExpiryConfig@(CacheExpiryConfig sweepIntervalSeconds _) = do

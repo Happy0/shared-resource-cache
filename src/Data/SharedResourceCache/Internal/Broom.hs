@@ -7,6 +7,7 @@ module Data.SharedResourceCache.Internal.Broom (startBroomLoop, removeIfStale, s
     import Control.Monad (forever, when)
     import Control.Monad.STM (atomically)
     import Data.SharedResourceCache.Internal.CacheItem (numberOfSharers, CacheItem (cacheItem))
+    import Control.Exception (SomeException, catch)
     import Control.Concurrent (threadDelay)
     import ListT (traverse_)
     import Data.Time (addUTCTime, getCurrentTime)
@@ -25,7 +26,7 @@ module Data.SharedResourceCache.Internal.Broom (startBroomLoop, removeIfStale, s
         when (now >= cacheExpiryTime) $ do
             removed <- atomically $ removeIfNoSharers cache cleanUpMap resourceId
             case (removed, onRemove) of
-                (Just removedItem, Just onRemovalFunction) -> onRemovalFunction removedItem
+                (Just removedItem, Just onRemovalFunction) -> catch (onRemovalFunction removedItem) (\(_ :: SomeException) -> return ())
                 _ -> return ()
         where
             removeIfNoSharers :: M.Map key (CacheEntry value) -> M.Map key UTCTime -> key -> STM (Maybe value)

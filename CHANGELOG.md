@@ -8,6 +8,14 @@ and this project adheres to the
 
 ## Unreleased
 
+## 0.2.0.1 - 2026-03-29
+
+### Fixed
+
+- Fixed a bug where an exception thrown by the `onRemove` callback in the broom
+  sweep loop would take down the background sweep thread. Exceptions from
+  `onRemove` are now caught and silently discarded.
+
 ## 0.2.0.0 - 2026-03-29
 
 ### Changed
