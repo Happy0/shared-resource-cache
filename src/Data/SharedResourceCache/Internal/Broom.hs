@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE LambdaCase #-}
 module Data.SharedResourceCache.Internal.Broom (startBroomLoop, removeIfStale, scheduleCacheCleanup, removeScheduledCleanup) where
     import qualified StmContainers.Map as M
     import Data.Hashable (Hashable)
@@ -12,7 +13,8 @@ module Data.SharedResourceCache.Internal.Broom (startBroomLoop, removeIfStale, s
     import ListT (traverse_)
     import Data.Time (addUTCTime, getCurrentTime)
     import Data.SharedResourceCache.Internal.Model (CacheEntry (..), CacheExpiryConfig (..))
-
+    import Focus (Focus (Focus), Change (Leave, Remove))
+    
     startBroomLoop :: Hashable key => M.Map key (CacheEntry value) -> M.Map key UTCTime -> Maybe (value -> IO ()) -> Int -> IO ()
     startBroomLoop resourceCache cleanUpMap onRemove sweepIntervalSeconds = forever $ do
         now <- getCurrentTime
@@ -30,23 +32,21 @@ module Data.SharedResourceCache.Internal.Broom (startBroomLoop, removeIfStale, s
                 _ -> return ()
         where
             removeIfNoSharers :: M.Map key (CacheEntry value) -> M.Map key UTCTime -> key -> STM (Maybe value)
-            removeIfNoSharers cache cleanupMap resourceId = do
-                resource <- M.lookup resourceId cache
-                case resource of
-                    Just (LoadedEntry cached) -> do
-                        sharers <- numberOfSharers cached
+            removeIfNoSharers cache cleanupMap resourceId = M.focus removeIfNoSharersStrategy resourceId cache
 
+            removeIfNoSharersStrategy :: Focus (CacheEntry value) STM (Maybe value)
+            removeIfNoSharersStrategy = Focus
+                (pure (Nothing, Leave))
+                (\case
+                    (LoadedEntry cached) -> do
+                        sharers <- numberOfSharers cached
                         if sharers == 0
                             then do
-                            removeFromCache cache resourceId
-                            removeScheduledCleanup cleanupMap resourceId
-                            return (Just (cacheItem cached))
-                            else
-                            return Nothing
-                    _ -> pure Nothing
-
-            removeFromCache :: M.Map key (CacheEntry value) -> key -> STM ()
-            removeFromCache resourceCache resourceId = M.delete resourceId resourceCache
+                                removeScheduledCleanup cleanUpMap resourceId
+                                pure (Just (cacheItem cached), Remove)
+                            else pure (Nothing, Leave)
+                    _ -> pure (Nothing, Leave)
+                    )
 
     scheduleCacheCleanup :: Hashable key => M.Map key UTCTime -> CacheExpiryConfig -> UTCTime -> key -> STM ()
     scheduleCacheCleanup cleanUpMap (CacheExpiryConfig _ itemEligibleForRemovalAfterUnusedSeconds) now resourceId = do
