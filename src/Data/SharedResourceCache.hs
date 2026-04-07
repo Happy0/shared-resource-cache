@@ -36,7 +36,7 @@ import Control.Exception (uninterruptibleMask_)
 --  manage periodically removing cache entries that have expired (as per the cache expiry configuration.)
 makeGlobalSharedResourceCache
  :: Hashable key
- => (key -> IO (Either err value)) -- ^ The action to load the given resource by ID. If the 'Either' result is a 'Left' or the IO action throws, the result is not stored in the cache
+ => (key -> IO (Either err value)) -- ^ The action to load the given resource by ID. If the 'Either' result is a 'Left' or the IO action throws, the result is not stored in the cache. Wrapping the IO function in a timeout to avoid the resource becoming inaccessible to other threads if the operation hangs should be considered.
  -> Maybe (value -> IO ()) -- ^ An action to be executed when the item is removed from the cache. If this action throws an exception it is silently ignored.
  -> CacheExpiryConfig -- ^ The configuration for when the cache item should be marked as expired and be eligible for removal from the cache
  -> IO (SharedResourceCache key value err)
