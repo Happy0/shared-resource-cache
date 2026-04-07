@@ -1,5 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
-module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry(..), SharedResourceCache(..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handleSharerLeaveSTM, handlerSharerJoin) where
+module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry(..), SharedResourceCache(..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handleSharerLeaveSTM, handleSharerJoin) where
     import Data.SharedResourceCache.Internal.CacheItem (CacheItem (CacheItem), decreaseSharersByOne, increaseSharersByOne)
     import Control.Concurrent ( MVar, ThreadId, putMVar, readMVar )
     import qualified StmContainers.Map as M
@@ -29,8 +29,8 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
         cacheExpiryConfig :: CacheExpiryConfig
     }
 
-    handlerSharerJoin :: Hashable key => SharedResourceCache key value err -> CacheItem value -> key -> STM ()
-    handlerSharerJoin cache cacheItem resourceId = do
+    handleSharerJoin :: Hashable key => SharedResourceCache key value err -> CacheItem value -> key -> STM ()
+    handleSharerJoin cache cacheItem resourceId = do
         void $ increaseSharersByOne cacheItem
         removeScheduledCleanup (cleanUpMap cache) resourceId
 
@@ -55,7 +55,7 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
                 Nothing -> pure Nothing
                 Just result@(LoadingEntry loadingMVar) -> pure (Just result)
                 Just result@(LoadedEntry resource) -> do
-                    handlerSharerJoin resourceCache resource resourceId
+                    handleSharerJoin resourceCache resource resourceId
                     pure (Just result)
 
         case existingItem of
@@ -117,7 +117,7 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
                 atomically $ do
                     connections <- newTVar 0
                     let entry = CacheItem resource connections
-                    handlerSharerJoin resourceCache entry resourceId
+                    handleSharerJoin resourceCache entry resourceId
                     M.insert (LoadedEntry entry) resourceId cache
                     pure (Right entry)
 

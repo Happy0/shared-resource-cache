@@ -27,7 +27,7 @@ import Prelude
 import Control.Monad.Trans.Resource (MonadResource, ReleaseKey, runResourceT, allocate)
 import Control.Monad.IO.Class (liftIO)
 import Data.SharedResourceCache.Internal.CacheItem (CacheItem(..))
-import Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry(..), SharedResourceCache (..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handlerSharerJoin, handleSharerLeaveSTM)
+import Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry(..), SharedResourceCache (..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handleSharerJoin, handleSharerLeaveSTM)
 import Data.SharedResourceCache.Internal.Broom (startBroomLoop)
 import Data.SharedResourceCache.Internal.Model (CacheExpiryConfig(..))
 import Control.Exception (uninterruptibleMask_)
@@ -116,7 +116,7 @@ peekCacheableResource resourceCache resourceId = do
       item <- M.lookup resourceId (cache resourceCache)
       case item of
         Just (LoadedEntry cachedItem) -> do
-          handlerSharerJoin resourceCache cachedItem resourceId
+          handleSharerJoin resourceCache cachedItem resourceId
           pure (Just cachedItem)
         _ -> pure Nothing
 
@@ -140,7 +140,7 @@ withPeekCacheableResource resourceCache resourceId action now = do
   resource <- M.lookup resourceId (cache resourceCache)
   case resource of
     Just (LoadedEntry item) -> do
-      handlerSharerJoin resourceCache item resourceId
+      handleSharerJoin resourceCache item resourceId
       result <- action (Just (cacheItem item))
       handleSharerLeaveSTM resourceCache item resourceId now
       pure result
