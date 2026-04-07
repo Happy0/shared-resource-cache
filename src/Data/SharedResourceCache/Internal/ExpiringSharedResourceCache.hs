@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE LambdaCase #-}
 module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry(..), SharedResourceCache(..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handleSharerLeaveSTM, handleSharerJoin) where
     import Data.SharedResourceCache.Internal.CacheItem (CacheItem (CacheItem), decreaseSharersByOne, increaseSharersByOne)
     import Control.Concurrent ( MVar, ThreadId, putMVar, readMVar )
@@ -17,6 +18,7 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
     import Control.Concurrent.MVar (newEmptyMVar)
     import Control.Concurrent.STM.TVar (newTVar)
     import Data.Either (isLeft)
+    import Focus (Focus (Focus), Change (Leave, Remove))
 
     -- | A cache of resources that can be shared between multiple threads (such as a TChan broadcast channel.)
     --
@@ -122,13 +124,16 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
                     pure (Right entry)
 
             adjustCacheEntryOnLoadError :: SharedResourceCache key value err -> key -> IO ()
-            adjustCacheEntryOnLoadError resourceCache@(SharedResourceCache cache _ _ _ _ _) resourceId = do
+            adjustCacheEntryOnLoadError (SharedResourceCache cache _ _ _ _ _) resourceId =
+                atomically $ M.focus removeIfLoading resourceId cache
 
-                atomically $ do
-                    result <-  M.lookup resourceId cache
-                    case result of
-                        -- Error occurred before we were able to load the cache entry - delete it so that another thread can claim
-                        -- the semaphore to try loading it
-                        Just (LoadingEntry _) -> M.delete resourceId cache
-                        -- It shouldn't be possible for a loaded entry to enter the cache and _then_ an exception to occur
-                        _ -> pure ()
+            -- | Remove the cache entry if it's still in the loading state, so that another thread can claim
+            -- the semaphore to try loading it. It shouldn't be possible for a loaded entry to enter the
+            -- cache and _then_ an exception to occur.
+            removeIfLoading :: Focus (CacheEntry value) STM ()
+            removeIfLoading = Focus
+                (pure ((), Leave))
+                (\case
+                    LoadingEntry _ -> pure ((), Remove)
+                    _              -> pure ((), Leave)
+                )
