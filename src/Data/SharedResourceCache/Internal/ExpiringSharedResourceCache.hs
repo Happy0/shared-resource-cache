@@ -1,7 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE LambdaCase #-}
 module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry(..), SharedResourceCache(..), CacheExpiryConfig, loadCacheableResource, handleSharerLeave, handleSharerLeaveSTM, handleSharerJoin) where
-    import Data.SharedResourceCache.Internal.CacheItem (CacheItem (CacheItem), decreaseSharersByOne, increaseSharersByOne)
+    import Data.SharedResourceCache.Internal.CacheItem (CacheItem (CacheItem, cacheItem), decreaseSharersByOne, increaseSharersByOne)
     import Control.Concurrent ( MVar, ThreadId, putMVar, readMVar )
     import qualified StmContainers.Map as M
     import Data.Hashable (Hashable)
@@ -18,7 +18,15 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
     import Control.Concurrent.MVar (newEmptyMVar)
     import Control.Concurrent.STM.TVar (newTVar)
     import Data.Either (isLeft)
-    import Focus (Focus (Focus), Change (Leave, Remove))
+    import Focus (Focus (Focus), Change (Leave, Remove, Set))
+
+    data CacheDecision value
+    -- The game is already in the cache
+        = AlreadyPresent (CacheItem value)
+    -- We're awaiting another thread loading the game
+        | Await (MVar ())
+    -- We have claimed ownership over loading the game
+        | Claimed (MVar ())    
 
     -- | A cache of resources that can be shared between multiple threads (such as a TChan broadcast channel.)
     --
@@ -51,61 +59,42 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
 
     loadCacheableResource :: Hashable key => SharedResourceCache key value err -> key -> IO (Either err (CacheItem value))
     loadCacheableResource resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId = do
-        existingItem <- atomically $ do
-            item <- M.lookup resourceId cache
-            case item of
-                Nothing -> pure Nothing
-                Just result@(LoadingEntry loadingMVar) -> pure (Just result)
-                Just result@(LoadedEntry resource) -> do
-                    handleSharerJoin resourceCache resource resourceId
-                    pure (Just result)
+        signal <- newEmptyMVar
+        existingItem <- atomically (M.focus (claimOwnershipOverLoad signal) resourceId cache)
 
         case existingItem of
-            Just (LoadedEntry item) -> pure $ Right item
-            Just (LoadingEntry loadedSignalMVar) -> do
+            AlreadyPresent item -> atomically $ pure (Right item)
+            Await loadedSignalMVar -> do
                 -- Wait the for the other thread that is already loading the resource to signal that it has loaded the item
                 -- into the cache then recursively start again
                 readMVar loadedSignalMVar
                 loadCacheableResource resourceCache resourceId
-            Nothing -> loadFreshlyIntoCache resourceCache resourceId
+                -- Load the item into the cache and then signal any other thread waiting for the resource that it is available
+            Claimed claimMvar -> loadFreshlyIntoCache claimMvar resourceCache resourceId
+        where
+            claimOwnershipOverLoad signal = 
+                Focus ( pure (Claimed signal, Set (LoadingEntry signal)))
+                (\case
+                    LoadingEntry signal -> pure (Await signal, Leave)
+                    LoadedEntry  entry  -> do 
+                        handleSharerJoin resourceCache entry resourceId 
+                        pure (AlreadyPresent entry, Leave)
+                )
 
-    loadFreshlyIntoCache :: forall key value err. Hashable key => SharedResourceCache key value err -> key -> IO (Either err (CacheItem value))
-    loadFreshlyIntoCache resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId = do
-        maybeSemaphore <- takeOwnershipOfLoad resourceCache resourceId
+    loadFreshlyIntoCache :: forall key value err. Hashable key => MVar () -> SharedResourceCache key value err -> key -> IO (Either err (CacheItem value))
+    loadFreshlyIntoCache semaphore resourceCache resourceId = do
+        -- We use uninterruptibleMask so that an async exception can't stop the sempahore remaining in the cache blocking any readers of the resource
+        -- from getting the resource. We're in the context of resourcet's 'allocate' so we're otherwise 'masked' apart from on blocking operations
+        result <- loadIntoCache resourceCache resourceId semaphore
+            `onException` uninterruptibleMask_ (adjustCacheEntryOnLoadError resourceCache resourceId >> signalCacheLoaded semaphore)
 
-        case maybeSemaphore of
-            -- Already loaded or loading in another thread, recursively start again
-            Nothing -> loadCacheableResource resourceCache resourceId
+        uninterruptibleMask_ $ do
+            when (isLeft result) (adjustCacheEntryOnLoadError resourceCache resourceId)
+            signalCacheLoaded semaphore
 
-            -- We've claimed ownership of loading the item into the cache
-            Just semaphore -> do
-                -- We use uninterruptibleMask so that an async exception can't stop the sempahore remaining in the cache blocking any readers of the resource
-                -- from getting the resource. We're in the context of resourcet's 'allocate' so we're otherwise 'masked' apart from on blocking operations
-                result <- loadIntoCache resourceCache resourceId semaphore
-                    `onException` uninterruptibleMask_ (adjustCacheEntryOnLoadError resourceCache resourceId >> signalCacheLoaded semaphore)
-
-                uninterruptibleMask_ $ do
-                    when (isLeft result) (adjustCacheEntryOnLoadError resourceCache resourceId)
-                    signalCacheLoaded semaphore
-
-                pure result
-
-
+        pure result
         where
             signalCacheLoaded semaphore = putMVar semaphore ()
-
-            -- Returns a Just if we took ownership and Nothing if a thread is already loading the item or it has already been fully loaded
-            takeOwnershipOfLoad :: SharedResourceCache key value err -> key -> IO (Maybe (MVar ()))
-            takeOwnershipOfLoad resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId = do
-                signal <- newEmptyMVar
-                atomically $ do
-                    cachedItem <- M.lookup resourceId cache
-                    case cachedItem of
-                        Nothing -> do
-                            let entry = LoadingEntry signal
-                            M.insert entry resourceId cache
-                            pure (Just signal)
-                        _ -> pure Nothing
 
             loadIntoCache :: SharedResourceCache key value err -> key -> MVar () -> IO (Either err (CacheItem value))
             loadIntoCache resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId _ = do
@@ -127,7 +116,7 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
             adjustCacheEntryOnLoadError (SharedResourceCache cache _ _ _ _ _) resourceId =
                 atomically $ M.focus removeIfLoading resourceId cache
 
-            -- | Remove the cache entry if it's still in the loading state, so that another thread can claim
+            -- | Remove the cache entry if it's still in the loading stitemate, so that another thread can claim
             -- the semaphore to try loading it. It shouldn't be possible for a loaded entry to enter the
             -- cache and _then_ an exception to occur.
             removeIfLoading :: Focus (CacheEntry value) STM ()
