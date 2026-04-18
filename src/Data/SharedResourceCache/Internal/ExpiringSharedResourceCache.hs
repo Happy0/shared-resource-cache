@@ -85,7 +85,7 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
     loadFreshlyIntoCache semaphore resourceCache resourceId = do
         -- We use uninterruptibleMask so that an async exception can't stop the sempahore remaining in the cache blocking any readers of the resource
         -- from getting the resource. We're in the context of resourcet's 'allocate' so we're otherwise 'masked' apart from on blocking operations
-        result <- loadIntoCache resourceCache resourceId semaphore
+        result <- loadIntoCache resourceCache resourceId
             `onException` uninterruptibleMask_ (adjustCacheEntryOnLoadError resourceCache resourceId >> signalCacheLoaded semaphore)
 
         uninterruptibleMask_ $ do
@@ -96,8 +96,8 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
         where
             signalCacheLoaded semaphore = putMVar semaphore ()
 
-            loadIntoCache :: SharedResourceCache key value err -> key -> MVar () -> IO (Either err (CacheItem value))
-            loadIntoCache resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId _ = do
+            loadIntoCache :: SharedResourceCache key value err -> key -> IO (Either err (CacheItem value))
+            loadIntoCache resourceCache@(SharedResourceCache cache _ loadResourceOp _ _ _) resourceId = do
                 resourceLoadResult <- loadResourceOp resourceId
                 case resourceLoadResult of
                     Right resource -> putIntoCache resourceCache resourceId resource
