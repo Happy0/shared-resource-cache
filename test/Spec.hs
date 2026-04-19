@@ -136,6 +136,36 @@ main = hspec $ do
                 removed <- liftIO $ readIORef removedItems
                 liftIO $ removed `shouldBe` []
 
+        it "does not evict a resurrected item after its sharer count returned to zero" $ do
+            loadCount <- newIORef (0 :: Int)
+            removedItems <- newIORef ([] :: [String])
+            cache :: Cache <- makeGlobalSharedResourceCache
+                (\key -> do
+                    modifyIORef' loadCount (+ 1)
+                    pure (Right ("value-" ++ key)))
+                (Just (\val -> modifyIORef' removedItems (val :)))
+                shortExpiry
+
+            -- First acquire/release cycle: count goes 0 -> 1 -> 0, scheduling a cleanup
+            runResourceT $ do
+                (_, val) <- getCacheableResource cache "key1"
+                liftIO $ val `shouldBe` Right "value-key1"
+
+            -- Re-acquire before the scheduled cleanup fires: count goes 0 -> 1
+            runResourceT $ do
+                (_, val) <- getCacheableResource cache "key1"
+                liftIO $ val `shouldBe` Right "value-key1"
+
+                -- Hold the resource well past the originally scheduled eviction time
+                liftIO $ threadDelay 2500000
+
+                removed <- liftIO $ readIORef removedItems
+                liftIO $ removed `shouldBe` []
+
+            -- Only one actual load occurred, confirming it's the same cached item
+            count <- readIORef loadCount
+            count `shouldBe` 1
+
         it "peek returns Nothing for uncached items" $ do
             cache <- makeTestCache Nothing longExpiry
 

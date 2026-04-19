@@ -41,8 +41,8 @@ module Data.SharedResourceCache.Internal.ExpiringSharedResourceCache (CacheEntry
 
     handleSharerJoin :: Hashable key => SharedResourceCache key value err -> CacheItem value -> key -> STM ()
     handleSharerJoin cache cacheItem resourceId = do
-        void $ increaseSharersByOne cacheItem
-        removeScheduledCleanup (cleanUpMap cache) resourceId
+        newSharerCount <- increaseSharersByOne cacheItem
+        when (newSharerCount == 1) $ removeScheduledCleanup (cleanUpMap cache) resourceId
 
     handleSharerLeave :: Hashable key => SharedResourceCache key value err -> CacheItem value -> key -> IO ()
     handleSharerLeave cache cacheItem resourceId =
